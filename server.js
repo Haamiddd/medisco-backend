@@ -45,7 +45,7 @@ app.get('/api/departments', async (req, res) => {
 app.get('/api/doctors', async (req, res) => {
     const { specialization } = req.query;
     try {
-        let query = 'SELECT * FROM doctors';
+        let query = 'SELECT id, name, specialization, available_days, available_times FROM doctors';
         let params = [];
         
         if (specialization) {
@@ -303,7 +303,6 @@ app.get('/api/doctors/availability', async (req, res) => {
                 id: doctor.id,
                 name: doctor.name,
                 specialization: doctor.specialization,
-                rating: doctor.rating,
                 available: isAvailable,
                 availableTimes: isAvailable ? availableTimes : [],
                 availableDays: doctor.available_days,
@@ -361,6 +360,106 @@ app.get('/api/appointments/reminders', async (req, res) => {
         `);
         
         res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+///////////////////////
+
+// In your backend (server.js), update the /api/doctors/available-today endpoint:
+app.get('/api/doctors/available-today', async (req, res) => {
+    try {
+        const today = new Date();
+        const dayName = today.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+        const todayDate = today.toISOString().split('T')[0];
+
+        // Get doctors available today with their available slots
+        const [results] = await pool.query(`
+            SELECT 
+                d.id,
+                d.name,
+                d.specialization,
+                d.available_times,
+                GROUP_CONCAT(a.appointment_time) AS booked_times
+            FROM doctors d
+            LEFT JOIN appointments a ON d.id = a.doctor_id 
+                AND a.appointment_date = ? 
+                AND a.status = 'scheduled'
+            WHERE LOWER(d.available_days) LIKE ?
+            GROUP BY d.id
+        `, [todayDate, `%${dayName}%`]);
+
+        const availableDoctors = results.map(doctor => {
+            const bookedTimes = doctor.booked_times ? doctor.booked_times.split(',') : [];
+            const allTimes = doctor.available_times.split(',').map(t => t.trim());
+            const availableTimes = allTimes.filter(time => !bookedTimes.includes(time));
+            
+            return {
+                id: doctor.id,
+                name: doctor.name.replace('Dr. ', '').replace('Dr ', ''), // Remove duplicate Dr. prefixes
+                specialization: doctor.specialization,
+                availableTimes
+            };
+        }).filter(doctor => doctor.availableTimes.length > 0);
+
+        res.json(availableDoctors);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get doctor availability with more detailed information
+app.get('/api/doctors/available-today', async (req, res) => {
+    try {
+        const today = new Date();
+        const dayName = today.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+        const todayDate = today.toISOString().split('T')[0];
+
+        const [results] = await pool.query(`
+            SELECT 
+                d.id,
+                d.name,
+                d.specialization,
+                d.available_times,
+                GROUP_CONCAT(a.appointment_time) AS booked_times
+            FROM doctors d
+            LEFT JOIN appointments a ON d.id = a.doctor_id 
+                AND a.appointment_date = ? 
+                AND a.status = 'scheduled'
+            WHERE LOWER(d.available_days) LIKE ?
+            GROUP BY d.id
+        `, [todayDate, `%${dayName}%`]);
+
+        const availableDoctors = results.map(doctor => {
+            const bookedTimes = doctor.booked_times ? doctor.booked_times.split(',') : [];
+            const allTimes = doctor.available_times.split(',').map(t => t.trim());
+            const availableTimes = allTimes.filter(time => !bookedTimes.includes(time));
+            
+            return {
+                id: doctor.id,
+                name: doctor.name.replace('Dr. ', '').replace('Dr ', ''),
+                specialization: doctor.specialization,
+                availableTimes
+            };
+        }).filter(doctor => doctor.availableTimes.length > 0);
+
+        res.json(availableDoctors);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
+});
+// Get doctor details by ID
+app.get('/api/doctors/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        const [rows] = await pool.query('SELECT * FROM doctors WHERE id = ?', [id]);
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Doctor not found' });
+        }
+        res.json(rows[0]);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
