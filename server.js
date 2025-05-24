@@ -41,24 +41,109 @@ app.get('/api/departments', async (req, res) => {
     }
 });
 
-// Get doctors by specialization
 app.get('/api/doctors', async (req, res) => {
-    const { specialization } = req.query;
-    try {
-        let query = 'SELECT id, name, specialization, available_days, available_times FROM doctors';
-        let params = [];
-        
-        if (specialization) {
-            query += ' WHERE specialization LIKE ?';
-            params.push(`%${specialization}%`);
-        }
-        
-        const [rows] = await pool.query(query, params);
-        res.json(rows);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
+  const { specialization } = req.query;
+  try {
+    let query = `
+      SELECT id, name, specialization, department_id, 
+             bio, available_days, available_times 
+      FROM doctors
+    `;
+    let params = [];
+    
+    if (specialization) {
+      query += ' WHERE specialization LIKE ?';
+      params.push(`%${specialization}%`);
     }
+    
+    const [rows] = await pool.query(query, params);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
+
+
+app.get('/api/doctors/availability', async (req, res) => {
+  const { name, day = 'today' } = req.query;
+  
+  if (!day) {
+    return res.status(400).json({ error: 'Day parameter is required' });
+  }
+
+  try {
+    // Convert day names to consistent format (e.g., "tomorrow" → actual weekday)
+    const normalizedDay = normalizeDay(day); // You'll need to implement this helper
+    
+    let query = `
+      SELECT 
+        id, 
+        name, 
+        specialization,
+        available_days,
+        available_times AS availableTimes,
+        /* More precise availability check */
+        CASE 
+          WHEN FIND_IN_SET(?, available_days) > 0 THEN TRUE
+          ELSE FALSE
+        END AS isAvailable
+      FROM doctors
+      WHERE 1=1
+    `;
+    
+    const params = [normalizedDay];
+    
+    if (name) {
+      query += ' AND name LIKE ?';
+      params.push(`%${name}%`);
+    }
+
+    const [rows] = await pool.query(query, params);
+    
+    // Convert availableTimes string to array if needed
+    const processedRows = rows.map(doctor => ({
+      ...doctor,
+      availableTimes: doctor.availableTimes 
+        ? doctor.availableTimes.split(',').map(t => t.trim()) 
+        : []
+    }));
+    
+    res.json(processedRows);
+  } catch (err) {
+    console.error('Database error:', err);
+    res.status(500).json({ error: 'Failed to check availability' });
+  }
+});
+
+// Helper function (would need to be implemented)
+function normalizeDay(day) {
+  const daysMap = {
+    'today': new Date().toLocaleString('en-us', { weekday: 'long' }).toLowerCase(),
+    'tomorrow': new Date(Date.now() + 86400000).toLocaleString('en-us', { weekday: 'long' }).toLowerCase(),
+    // Add other mappings as needed
+  };
+  return daysMap[day.toLowerCase()] || day.toLowerCase();
+}
+
+// Get doctors by specialization
+/* app.get('/api/doctors/availability', async (req, res) => {
+  const { day } = req.query;
+  try {
+    // This query needs to check availability for the specific day
+    const [rows] = await pool.query(`
+      SELECT d.id, d.name, d.specialization, 
+             a.is_available as isAvailable,
+             a.available_times as availableTimes
+      FROM doctors d
+      LEFT JOIN availability a ON d.id = a.doctor_id
+      WHERE a.day = ? AND a.is_available = true
+    `, [day]);
+    
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}); */
 
 // Get doctor availability
 app.get('/api/doctors/:id/availability', async (req, res) => {
@@ -240,7 +325,7 @@ app.listen(port, () => {
 // Add these new endpoints to your existing server code:
 
 // Get doctor by name or specialization
-app.get('/api/doctors/availability', async (req, res) => {
+/* app.get('/api/doctors/availability', async (req, res) => {
     const { name, day } = req.query;
     try {
         let query = `
@@ -264,7 +349,7 @@ app.get('/api/doctors/availability', async (req, res) => {
             date = tomorrow.toISOString().split('T')[0];
         } else {
             // For weekdays, find the next occurrence of that day
-            const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+            const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
             const dayIndex = days.indexOf(day.toLowerCase());
             if (dayIndex === -1) {
                 return res.status(400).json({ error: 'Invalid day specified' });
@@ -314,7 +399,7 @@ app.get('/api/doctors/availability', async (req, res) => {
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
-});
+}); */
 
 // Get latest appointment for a patient
 app.get('/api/appointments/latest', async (req, res) => {
@@ -462,5 +547,62 @@ app.get('/api/doctors/:id', async (req, res) => {
         res.json(rows[0]);
     } catch (err) {
         res.status(500).json({ error: err.message });
+    }
+});
+
+
+//   ////learnng 
+
+app.get('/api/learned-facts', async (req, res) => {
+    const { question } = req.query;
+    console.log('🔍 [Backend] Received question:', question); // Log raw input
+
+    if (!question) {
+        return res.status(400).json({ error: 'Question is required' });
+    }
+
+    const cleanQuestion = question.toLowerCase().trim().replace(/\?+$/, '');
+    console.log('🧹 [Backend] Cleaned question:', cleanQuestion); // Log cleaned version
+
+    try {
+        console.log('📡 [Backend] Querying DB for:', cleanQuestion);
+        const [rows] = await pool.query(
+            'SELECT answer FROM learned_facts WHERE question = ?',
+            [cleanQuestion]
+        );
+        
+        console.log('💾 [Backend] DB Response:', rows); // Log DB results
+
+        if (rows.length > 0) {
+            console.log('✅ [Backend] Answer found:', rows[0].answer);
+            return res.json({ answer: rows[0].answer });
+        } else {
+            console.log('❌ [Backend] No answer found in DB');
+            return res.json({ answer: null });
+        }
+    } catch (err) {
+        console.error('🔥 [Backend] DB Error:', err);
+        return res.status(500).json({ error: 'Database error' });
+    }
+});
+
+
+app.post('/api/learned-facts', async (req, res) => {
+    const { question, answer } = req.body;
+    const cleanQuestion = question.toLowerCase().trim().replace(/\?+$/, '');
+
+    console.log('➕ [Backend] Inserting:', cleanQuestion, '->', answer); // Log input
+
+    try {
+        const [result] = await pool.query(
+            'INSERT INTO learned_facts (question, answer) VALUES (?, ?)',
+            [cleanQuestion, answer]
+        );
+
+        console.log('💾 [Backend] Insert result:', result); // Log DB response
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('🔥 [Backend] INSERT failed:', err.message);
+        return res.status(500).json({ error: 'Failed to save' });
     }
 });
